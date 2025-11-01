@@ -41,6 +41,7 @@ import {
   History,
 } from "@mui/icons-material";
 
+// const API_URL = "http://localhost:3000";
 const API_URL = "https://secure-chat-application.onrender.com";
 
 // ============= ENCRYPTION UTILITIES =============
@@ -177,6 +178,8 @@ function App() {
   useEffect(() => {
     if (socket && selectedUser && conversationKeys[selectedUser.userId]) {
       if (!loadedConversations.has(selectedUser.userId)) {
+        // Clear messages for this conversation first
+        setMessages([]);
         loadMessageHistory();
         setLoadedConversations((prev) =>
           new Set(prev).add(selectedUser.userId)
@@ -289,64 +292,79 @@ function App() {
     newSocket.on("message-history", (data) => {
       const { recipientId, messages: historyMessages } = data;
 
-      if (!conversationKeys[recipientId]) {
-        console.log("⚠️ No key available yet for decrypting history");
-        setLoadingHistory(false);
-        return;
-      }
+      console.log(
+        `📥 Received ${
+          historyMessages.length
+        } messages from server for user ${recipientId.substring(0, 8)}...`
+      );
 
-      try {
-        const decryptedMessages = historyMessages.map((msg, index) => {
+      // Use a slight delay to ensure conversation key state has updated
+      setTimeout(() => {
+        setConversationKeys((currentKeys) => {
+          const key = currentKeys[recipientId];
+
+          if (!key) {
+            console.log("⚠️ No key available yet for decrypting history");
+            setLoadingHistory(false);
+            return currentKeys;
+          }
+
           try {
-            const key = conversationKeys[recipientId];
-            const decrypted = decryptMessage(
-              {
-                encrypted: msg.encryptedContent,
-                iv: msg.iv,
-                hmac: msg.hmac,
-              },
-              key
+            const decryptedMessages = historyMessages.map((msg, index) => {
+              try {
+                const decrypted = decryptMessage(
+                  {
+                    encrypted: msg.encryptedContent,
+                    iv: msg.iv,
+                    hmac: msg.hmac,
+                  },
+                  key
+                );
+
+                return {
+                  id: msg._id || `${msg.timestamp}-${index}`,
+                  text: decrypted,
+                  sender: msg.senderUsername,
+                  senderId: msg.senderId,
+                  timestamp: new Date(msg.timestamp).getTime(),
+                  isOwn: msg.senderId === userData.id,
+                  encrypted: true,
+                };
+              } catch (err) {
+                console.error("❌ Failed to decrypt history message:", err);
+                return {
+                  id: msg._id || `${msg.timestamp}-${index}-error`,
+                  text: "⚠️ Failed to decrypt message",
+                  sender: msg.senderUsername,
+                  senderId: msg.senderId,
+                  timestamp: new Date(msg.timestamp).getTime(),
+                  isOwn: msg.senderId === userData.id,
+                  error: true,
+                };
+              }
+            });
+
+            console.log(`✅ Decrypted ${decryptedMessages.length} messages`);
+            console.log(
+              "📊 Message details:",
+              decryptedMessages.map((m) => ({
+                text: m.text.substring(0, 20),
+                senderId: m.senderId.substring(0, 8),
+                isOwn: m.isOwn,
+              }))
             );
 
-            return {
-              id: msg._id || `${msg.timestamp}-${index}`,
-              text: decrypted,
-              sender: msg.senderUsername,
-              senderId: msg.senderId,
-              timestamp: new Date(msg.timestamp).getTime(),
-              isOwn: msg.senderId === userData.id,
-              encrypted: true,
-            };
+            setMessages(decryptedMessages);
+            console.log(`📜 Set ${decryptedMessages.length} messages in state`);
           } catch (err) {
-            console.error("❌ Failed to decrypt history message:", err);
-            return {
-              id: msg._id || `${msg.timestamp}-${index}-error`,
-              text: "⚠️ Failed to decrypt message",
-              sender: msg.senderUsername,
-              senderId: msg.senderId,
-              timestamp: new Date(msg.timestamp).getTime(),
-              isOwn: msg.senderId === userData.id,
-              error: true,
-            };
+            console.error("❌ Error processing message history:", err);
+          } finally {
+            setLoadingHistory(false);
           }
-        });
 
-        // Merge with existing messages, avoiding duplicates
-        setMessages((prev) => {
-          const existingIds = new Set(prev.map((m) => m.id));
-          const newMessages = decryptedMessages.filter(
-            (m) => !existingIds.has(m.id)
-          );
-          return [...prev, ...newMessages];
+          return currentKeys;
         });
-        console.log(
-          `📜 Loaded ${decryptedMessages.length} messages from history`
-        );
-      } catch (err) {
-        console.error("❌ Error processing message history:", err);
-      } finally {
-        setLoadingHistory(false);
-      }
+      }, 50); // Small delay to let state update
     });
 
     newSocket.on("receive-message", (data) => {
