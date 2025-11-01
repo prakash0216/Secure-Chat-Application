@@ -41,7 +41,7 @@ import {
   History,
 } from "@mui/icons-material";
 
-const API_URL = "http://localhost:3000";
+const API_URL = "https://secure-chat-application.onrender.com";
 
 // ============= ENCRYPTION UTILITIES =============
 const encryptMessage = (message, key) => {
