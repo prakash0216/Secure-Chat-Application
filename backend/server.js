@@ -12,7 +12,11 @@ const app = express();
 const server = http.createServer(app);
 const io = socketIo(server, {
   cors: {
-    origin: "*",
+    origin: [
+      "https://secure-chat-application-1.onrender.com",
+      "https://secure-chat-application-nu.vercel.app",
+      "http://localhost:5173",
+    ],
     methods: ["GET", "POST"],
     credentials: true,
   },
@@ -21,7 +25,11 @@ const io = socketIo(server, {
 // Middleware
 app.use(
   cors({
-    origin: "*",
+    origin: [
+      "https://secure-chat-application-1.onrender.com",
+      "https://secure-chat-application-nu.vercel.app",
+      "http://localhost:5173",
+    ],
     credentials: true,
   })
 );
