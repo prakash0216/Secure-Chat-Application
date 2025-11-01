@@ -263,6 +263,7 @@ function App() {
   const connectSocket = (authToken, userData) => {
     const newSocket = io(API_URL, {
       auth: { token: authToken },
+      forceNew: true,
     });
 
     newSocket.on("connect", () => {
