@@ -45,6 +45,13 @@ import {
 const API_URL = "https://secure-chat-application.onrender.com";
 
 // ============= ENCRYPTION UTILITIES =============
+/*
+  Encrypts the message and flow will be like this:
+  1. Generate random IV.
+  2. Encrypt the message using AES-256-CBC with the provided key and IV.
+  3. Generate HMAC-SHA256 for integrity check.
+  4. Return encrypted message, IV, HMAC, and timestamp.
+*/
 const encryptMessage = (message, key) => {
   try {
     const iv = CryptoJS.lib.WordArray.random(16);
@@ -77,6 +84,12 @@ const encryptMessage = (message, key) => {
   }
 };
 
+/*
+  Decrypts the message and flow will be like this:
+  1. Verify HMAC for integrity.
+  2. Decrypt the message using AES-256-CBC with the provided key and IV.
+  3. Return the decrypted plain text message
+*/
 const decryptMessage = (encryptedData, key) => {
   try {
     const { encrypted, iv, hmac: receivedHmac } = encryptedData;
@@ -136,7 +149,9 @@ function App() {
 
   const messagesEndRef = useRef(null);
 
-  // Check for existing auth on mount
+  /*
+    Auto-login if token and user data are found in localStorage
+  */
   useEffect(() => {
     const savedToken = localStorage.getItem("chatToken");
     const savedUser = localStorage.getItem("chatUser");
@@ -155,14 +170,18 @@ function App() {
     }
   }, []);
 
+  // Auto-scroll to bottom on new messages
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   };
 
+  // Auto-scroll to bottom on new messages
   useEffect(() => {
     scrollToBottom();
   }, [messages]);
 
+  // Request conversation key when a user is selected
+  // This is to ensure that the conversation key is available before loading message history
   useEffect(() => {
     if (socket && selectedUser && !conversationKeys[selectedUser.userId]) {
       console.log(
@@ -175,6 +194,7 @@ function App() {
   }, [selectedUser, socket, conversationKeys]);
 
   // Load message history only once per conversation
+  // This is to ensure that the message history is only loaded once per conversation
   useEffect(() => {
     if (socket && selectedUser && conversationKeys[selectedUser.userId]) {
       if (!loadedConversations.has(selectedUser.userId)) {
@@ -189,6 +209,7 @@ function App() {
   }, [selectedUser, conversationKeys]);
 
   // ============= LOAD MESSAGE HISTORY =============
+  // Load message history for selected user
   const loadMessageHistory = async () => {
     if (!selectedUser || !conversationKeys[selectedUser.userId]) return;
 
@@ -197,6 +218,15 @@ function App() {
   };
 
   // ============= AUTHENTICATION =============
+  /*
+    Handles user registration
+    The flow will be like this:
+    * 1. Send a POST request to the server to register the user.
+    * 2. If the registration is successful, store the token and user data in localStorage.
+    * 3. If the registration fails, display an error message.
+    * 4. Update loading state accordingly.
+    * 5. Connect to the socket server upon successful registration.
+  */
   const handleRegister = async (e) => {
     e.preventDefault();
     setError("");
@@ -228,6 +258,15 @@ function App() {
     }
   };
 
+  /*
+    Handles user login
+    The flow will be like this:
+    * 1. Send a POST request to the server to log in the user.
+    * 2. If the login is successful, store the token and user data in localStorage.
+    * 3. If the login fails, display an error message.
+    * 4. Update loading state accordingly.
+    * 5. Connect to the socket server upon successful login.
+  */
   const handleLogin = async (e) => {
     e.preventDefault();
     setError("");
@@ -260,6 +299,26 @@ function App() {
   };
 
   // ============= SOCKET CONNECTION =============
+  /*
+    Connects to the socket server with authentication
+    The flow will be like this:
+    * 1. Create a new socket connection to the server.
+    * 2. Emit a "connect" event to the server.
+    * 3. If the connection is successful, update the current view to "chat".
+    * 4. Listen for various events such as "conversation-key", "users-online", "message-history", "receive-message", "message-sent", "message-error", and "disconnect".
+    * 5. Update the relevant state variables based on the events received.
+    * 6. Handle errors and disconnections appropriately.
+    * 7. Store the socket instance in state.
+    * 8. Log relevant information to the console for debugging.
+    * 9. Request conversation keys as needed.
+    * 10. Decrypt messages upon receipt using the appropriate conversation key.
+    * 11. Manage offline message notifications.
+    * 12. Ensure message history is decrypted and displayed correctly.
+    * 13. Handle pending messages awaiting decryption keys.
+    * 14. Maintain overall application state consistency.
+    * 15. Provide user feedback through success and error messages.
+    * 16. Ensure secure handling of encryption keys and messages.
+  */
   const connectSocket = (authToken, userData) => {
     const newSocket = io(API_URL, {
       auth: { token: authToken },
@@ -486,6 +545,20 @@ function App() {
   }, [conversationKeys, selectedUser]);
 
   // ============= SEND MESSAGE =============
+  /*
+    Handles sending a message
+    The flow will be like this:
+    * 1. Prevent default form submission behavior.
+    * 2. Check if the message input is empty or no user is selected; if so, return early.
+    * 3. Retrieve the conversation key for the selected user; if not available, show an error and return.
+    * 4. Encrypt the message using the conversation key.
+    * 5. Emit the "send-message" event to the server with the encrypted message and recipient details.
+    * 6. Update the local messages state to include the newly sent message.
+    * 7. Clear the message input field.
+    * 8. Handle any encryption errors by displaying an error message.
+    * 9. Provide user feedback through error messages as needed.
+    * 10. Ensure secure handling of the message during encryption and transmission.
+  */
   const handleSendMessage = (e) => {
     e.preventDefault();
 
@@ -527,6 +600,17 @@ function App() {
     }
   };
 
+  // ============= LOGOUT =============
+  /*
+    Handles user logout
+    The flow will be like this:
+    * 1. Disconnect from the socket server if connected.
+    * 2. Clear all relevant state variables including user, token, socket, conversation keys, messages, and UI states.
+    * 3. Remove user data and token from localStorage.
+    * 4. Reset the application view to the login screen.
+    * 5. Ensure a clean state for future logins.
+    * 6. Provide user feedback through UI updates.
+  */
   const handleLogout = () => {
     if (socket) {
       socket.disconnect();
@@ -546,6 +630,8 @@ function App() {
     localStorage.removeItem("chatUser");
   };
 
+  // ============= USER SELECTION =============
+  // Handles user selection from the online users list
   const handleUserSelect = (u) => {
     setSelectedUser(u);
     // Only clear messages if switching to different user
@@ -558,6 +644,7 @@ function App() {
     }
   };
 
+  // Handles going back to users list on mobile
   const handleBackToUsers = () => {
     setShowChatOnMobile(false);
     setSelectedUser(null);

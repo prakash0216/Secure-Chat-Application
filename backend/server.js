@@ -10,6 +10,7 @@ require("dotenv").config();
 
 const app = express();
 const server = http.createServer(app);
+// Configure Socket.IO with CORS settings of the deployed frontend
 const io = socketIo(server, {
   cors: {
     origin: [
@@ -22,7 +23,7 @@ const io = socketIo(server, {
   },
 });
 
-// Middleware
+// Middleware of the deployed frontend
 app.use(
   cors({
     origin: [
@@ -35,24 +36,10 @@ app.use(
 );
 app.use(express.json());
 
-// const io = socketIo(server, {
-//   cors: {
-//     origin: process.env.CLIENT_URL || "http://localhost:5173",
-//     methods: ["GET", "POST"],
-//     credentials: true,
-//   },
-// });
-
-// // Middleware
-// app.use(
-//   cors({
-//     origin: process.env.CLIENT_URL || "http://localhost:5173",
-//     credentials: true,
-//   })
-// );
-// app.use(express.json());
-
 // ============= MONGODB SCHEMAS =============
+/*
+Schema definitions for Users, Conversation Keys, and Messages
+*/
 const userSchema = new mongoose.Schema({
   username: {
     type: String,
@@ -161,16 +148,19 @@ const messageSchema = new mongoose.Schema({
 messageSchema.index({ senderId: 1, recipientId: 1, timestamp: -1 });
 messageSchema.index({ conversationId: 1, timestamp: -1 });
 
+// Create models for each schema i.e., User, ConversationKey, Message
 const User = mongoose.model("User", userSchema);
 const ConversationKey = mongoose.model(
   "ConversationKey",
   conversationKeySchema
 );
+
 const Message = mongoose.model("Message", messageSchema);
 
 // In-memory storage for online users only
 const onlineUsers = new Map();
 
+// JWT Secret used for signing tokens and authentication
 const JWT_SECRET =
   process.env.JWT_SECRET || "your-secret-key-change-in-production";
 
@@ -178,6 +168,7 @@ const JWT_SECRET =
 const MONGODB_URI =
   process.env.MONGODB_URI || "mongodb://localhost:27017/secure-chat";
 
+// Connect to MongoDB
 mongoose
   .connect(MONGODB_URI, {
     useNewUrlParser: true,
@@ -212,6 +203,7 @@ function logSection(title) {
 }
 
 // ============= ENCRYPTION UTILITIES =============
+// Generate a new 256-bit (32-byte) AES encryption key in hex format
 function generateEncryptionKey() {
   const key = crypto.randomBytes(32).toString("hex");
   console.log("🔑 Generated 256-bit AES Key:");
@@ -224,7 +216,10 @@ function generateEncryptionKey() {
   return key;
 }
 
-// Generate or retrieve conversation key for a pair of users
+/*
+Generate or retrieve conversation key for a pair of users (userId1, userId2) from MongoDB ,here we are using a 
+sorted combination of user IDs as the conversation ID to ensure uniqueness regardless of the order of users.
+*/
 async function getConversationKey(userId1, userId2) {
   const sortedIds = [userId1, userId2].sort();
   const conversationId = `${sortedIds[0]}:${sortedIds[1]}`;
@@ -259,6 +254,15 @@ async function getConversationKey(userId1, userId2) {
   }
 }
 
+/*
+Encrypt a message using AES-256-CBC with a 256-bit (32-byte) key.
+Here like in the frontend, we generate a random IV for each encryption operation and use HMAC-SHA256 to ensure message integrity.
+The complete flow will be like this:
+    * 1. Generate a random 128-bit (16-byte) IV.
+    * 2. Encrypt the message using AES-256-CBC with the provided key and IV.
+    * 3. Calculate the HMAC-SHA256 of the encrypted message and IV.
+    * 4. Return the encrypted message, IV, and HMAC-SHA256. 
+*/
 function encryptMessage(message, key) {
   try {
     logSection("🔒 ENCRYPTING MESSAGE");
@@ -323,6 +327,16 @@ function encryptMessage(message, key) {
   }
 }
 
+/*
+Decrypt a message using AES-256-CBC and verify its integrity using HMAC-SHA256.
+The Description flow will be like this:
+    * 1. Verify the HMAC-SHA256 of the received encrypted message and IV.
+    * 2. Decrypt the message using AES-256-CBC with the provided key and IV.
+    * 3. Return the decrypted plain text message.
+    * 4. If HMAC verification fails, throw an error indicating possible tampering.
+    * 5. If decryption fails, throw an error indicating decryption failure.
+    * 6. Otherwise, return the decrypted plain text message.
+*/
 function decryptMessage(encryptedData, key) {
   try {
     logSection("🔓 DECRYPTING MESSAGE");
@@ -371,7 +385,9 @@ function decryptMessage(encryptedData, key) {
 }
 
 // ============= AUTHENTICATION ROUTES =============
-
+/*
+Return a status message and the number of online users.
+*/
 app.get("/", (req, res) => {
   res.json({
     status: "running",
@@ -387,6 +403,19 @@ app.get("/", (req, res) => {
   });
 });
 
+/*
+Register a new user.
+The flow will be like this:
+    * 1. Validate username and password.
+    * 2. check username length >=3 and password length >=6.
+    * 3. check if username already exists.
+    * 4. Hash password with bcrypt, with 10 rounds.
+    * 5. Generate unique user ID.
+    * 6. Generate JWT token valid for 24 hours.
+    * 7. Return success message and JWT token.
+    * 8. Create and save user to MongoDB.
+    * 9. Generate JWT token valid for 24 hours. 
+*/
 app.post("/api/register", async (req, res) => {
   try {
     logSection("👤 NEW USER REGISTRATION");
@@ -482,6 +511,16 @@ app.post("/api/register", async (req, res) => {
   }
 });
 
+/*
+User login route.
+The flow will be like this:
+    * 1. Validate username and password.
+    * 2. Find user in MongoDB.
+    * 3. Verify password with bcrypt.
+    * 4. Generate JWT token valid for 24 hours.
+    * 5. Return success message and JWT token.
+    * 6. Update last login timestamp in MongoDB.
+*/
 app.post("/api/login", async (req, res) => {
   try {
     logSection("🔑 USER LOGIN ATTEMPT");
@@ -548,7 +587,14 @@ app.post("/api/login", async (req, res) => {
   }
 });
 
-// Get message history for a conversation
+/*
+Get message history for a conversation
+The flow will be like this:
+    * 1. Authenticate user via JWT token.
+    * 2. Construct conversation ID from user IDs.
+    * 3. Fetch last 100 messages from MongoDB for the conversation.
+    * 4. Return success message and messages.
+*/
 app.get("/api/messages/:userId", async (req, res) => {
   try {
     const token = req.headers.authorization?.split(" ")[1];
@@ -586,6 +632,14 @@ app.get("/api/messages/:userId", async (req, res) => {
 });
 
 // ============= SOCKET.IO AUTHENTICATION MIDDLEWARE =============
+/*
+Socket.IO authentication middleware.
+The flow will be like this:
+    * 1. Extract token from socket handshake.
+    * 2. Verify token using JWT_SECRET.
+    * 3. If valid, attach user ID and username to socket.
+    * 4. If invalid, return error.
+*/
 io.use((socket, next) => {
   logSection("🔌 SOCKET CONNECTION ATTEMPT");
   const token = socket.handshake.auth.token;
@@ -615,6 +669,24 @@ io.use((socket, next) => {
 });
 
 // ============= SOCKET.IO CONNECTION HANDLERS =============
+/*
+Handle new Socket.IO connections.
+The flow will be like this:
+    * 1. Log user connection and store in online users map.
+    * 2. Broadcast updated online users list.
+    * 3. Handle request for conversation key.
+    * 4. Handle incoming encrypted messages.
+    * 5. On disconnect, remove user from online users map and broadcast update.
+    * 6. Verify message integrity on server side using HMAC.
+    * 7. Save messages to MongoDB.
+    * 8. Forward messages to recipient if online.
+    * 9. Acknowledge message sent status to sender.
+    * 10. If recipient offline, save message for later delivery.
+    * 11. Log all relevant events and errors.
+    * 12. Ensure all messages are end-to-end encrypted. 
+    * 13. Use conversation keys for encryption/decryption.
+    * 14. Maintain user privacy and security throughout.
+*/
 io.on("connection", (socket) => {
   logSection("✅ USER CONNECTED");
   console.log(`   Socket ID: ${socket.id}`);
@@ -636,6 +708,7 @@ io.on("connection", (socket) => {
       userId: userData.userId,
     });
   }
+  //Online users list
   const onlineUsersList = Array.from(userMap.values());
 
   io.emit("users-online", onlineUsersList);
@@ -667,7 +740,18 @@ io.on("connection", (socket) => {
     }
   });
 
-  // Handle incoming encrypted messages
+  /*
+   Handle incoming encrypted messages
+    * 1. Verify message integrity on server side using HMAC.
+    * 2. Save messages to MongoDB.
+    * 3. Forward messages to recipient if online.
+    * 4. Acknowledge message sent status to sender.
+    * 5. If recipient offline, save message for later delivery.
+    * 6. Log all relevant events and errors.
+    * 7. Ensure all messages are end-to-end encrypted. 
+    * 8. Use conversation keys for encryption/decryption.
+    * 9. Maintain user privacy and security throughout.
+    */
   socket.on("send-message", async (data) => {
     try {
       logSeparator();
@@ -790,7 +874,13 @@ io.on("connection", (socket) => {
     }
   });
 
-  // Load message history when requested
+  /*
+   Load message history when requested
+   The flow will be like this:
+    * 1. Construct conversation ID from user IDs.
+    * 2. Fetch last 100 messages from MongoDB for the conversation.
+    * 3. Return success message and messages.
+   */
   socket.on("load-messages", async (data) => {
     try {
       const { recipientId } = data;
@@ -818,7 +908,12 @@ io.on("connection", (socket) => {
     }
   });
 
-  // Handle disconnect
+  /*
+   Handle disconnect
+   The flow will be like this:
+    * 1. Remove user from online users list.
+    * 2. Broadcast updated online users list.
+   */
   socket.on("disconnect", () => {
     logSection("🔌 USER DISCONNECTED");
     console.log(`   Socket ID: ${socket.id}`);
@@ -842,6 +937,7 @@ io.on("connection", (socket) => {
 });
 
 // ============= STATISTICS ENDPOINT =============
+// Get server statistics
 app.get("/api/stats", async (req, res) => {
   try {
     const totalUsers = await User.countDocuments();
@@ -931,7 +1027,15 @@ server.listen(PORT, () => {
   logSeparator();
 });
 
-// Graceful shutdown
+// ============= PROCESS MANAGEMENT =============
+/*
+Graceful shutdown on SIGTERM and SIGINT signals.
+The flow will be like this:
+    * 1. Log receipt of shutdown signal.
+    * 2. Close HTTP server.
+    * 3. Close MongoDB connection.
+    * 4. Exit process.
+*/
 process.on("SIGTERM", async () => {
   console.log("\n⚠️ SIGTERM signal received: closing HTTP server");
   server.close(() => {
