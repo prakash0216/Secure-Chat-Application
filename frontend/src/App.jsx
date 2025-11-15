@@ -44,6 +44,49 @@ import {
 // const API_URL = "http://localhost:3000";
 const API_URL = "https://secure-chat-application.onrender.com";
 
+// Expose this globally so users can test tampering in console
+if (typeof window !== "undefined") {
+  window.testTampering = function (encryptedMessage) {
+    console.log(
+      "%c⚠️ TAMPERING TEST - Modifying encrypted message",
+      "color: #ef4444; font-size: 14px; font-weight: bold;"
+    );
+    console.log(
+      "Original encrypted:",
+      encryptedMessage.encrypted.substring(0, 40) + "..."
+    );
+
+    // Tamper with the encrypted content (change one byte)
+    const tampered =
+      encryptedMessage.encrypted.substring(0, 10) +
+      "FF" +
+      encryptedMessage.encrypted.substring(12);
+    console.log("Tampered encrypted:", tampered.substring(0, 40) + "...");
+    console.log(
+      "%c⚠️ This will cause HMAC verification to FAIL",
+      "color: #ef4444; font-weight: bold;"
+    );
+
+    return {
+      ...encryptedMessage,
+      encrypted: tampered,
+    };
+  };
+
+  console.log(
+    "%c🔒 Secure Chat Debug Tools Available",
+    "color: #667eea; font-size: 14px; font-weight: bold;"
+  );
+  console.log(
+    "%c1. Check Network tab to see encrypted messages",
+    "color: #888;"
+  );
+  console.log(
+    "%c2. Use window.testTampering(msg) to simulate message tampering",
+    "color: #888;"
+  );
+}
+
 // ============= ENCRYPTION UTILITIES =============
 /*
   Encrypts the message and flow will be like this:
@@ -99,7 +142,31 @@ const decryptMessage = (encryptedData, key) => {
       CryptoJS.enc.Hex.parse(key)
     );
 
-    if (calculatedHmac.toString(CryptoJS.enc.Hex) !== receivedHmac) {
+    const calculatedHmacHex = calculatedHmac.toString(CryptoJS.enc.Hex);
+    const passed = calculatedHmacHex === receivedHmac;
+
+    // Log HMAC verification in console
+    console.log(
+      "%c🔍 HMAC Integrity Check",
+      `color: ${passed ? "#10b981" : "#ef4444"}; font-weight: bold;`
+    );
+    console.log("Received HMAC: ", receivedHmac.substring(0, 40) + "...");
+    console.log("Calculated HMAC:", calculatedHmacHex.substring(0, 40) + "...");
+    console.log(
+      "Result:",
+      passed
+        ? "✅ VALID - Message is authentic"
+        : "❌ FAILED - Message was tampered!"
+    );
+
+    if (!passed) {
+      console.error(
+        "%c❌ TAMPERING DETECTED!",
+        "color: #ef4444; font-size: 16px; font-weight: bold;"
+      );
+      console.error(
+        "The message HMAC does not match. This message has been modified in transit."
+      );
       throw new Error(
         "⚠️ Message integrity check failed - tampering detected!"
       );
@@ -115,7 +182,8 @@ const decryptMessage = (encryptedData, key) => {
       }
     );
 
-    return decrypted.toString(CryptoJS.enc.Utf8);
+    const decryptedText = decrypted.toString(CryptoJS.enc.Utf8);
+    return decryptedText;
   } catch (error) {
     throw new Error("Decryption failed: " + error.message);
   }
