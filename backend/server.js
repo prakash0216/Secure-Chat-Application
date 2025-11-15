@@ -160,7 +160,10 @@ const Message = mongoose.model("Message", messageSchema);
 // In-memory storage for online users only
 const onlineUsers = new Map();
 
-// JWT Secret used for signing tokens and authentication
+//JWT Secret - used to sign and verify tokens
+// - This secret is used to cryptographically sign JWT tokens
+// - Should be a long random string in production (stored in .env file)
+// - Anyone with this secret can create valid tokens
 const JWT_SECRET =
   process.env.JWT_SECRET || "your-secret-key-change-in-production";
 
@@ -465,6 +468,14 @@ app.post("/api/register", async (req, res) => {
     console.log(`\n   🔐 Hashing Password with bcrypt (10 rounds)...`);
     const startTime = Date.now();
     const hashedPassword = await bcrypt.hash(password, 10);
+    // - bcrypt.hash(plaintext, rounds)
+    // - plaintext: "secret123"
+    // - rounds: 10 (2^10 = 1024 iterations)
+    // - Higher rounds = slower but more secure
+    // - Output example: "$2a$10$N9qo8uLOickgx2ZMRZoMyeIjZAgcfl7p92ldGxad68LJZdL17lhWy"
+    // - Format: $2a$[rounds]$[salt][hash]
+    // - Salt is random, included in output
+    // - Same password → different hash each time (due to random salt)
     const hashTime = Date.now() - startTime;
 
     console.log(`   Original Password: ${"*".repeat(password.length)}`);
@@ -475,6 +486,10 @@ app.post("/api/register", async (req, res) => {
 
     // Generate unique user ID
     const userId = crypto.randomBytes(16).toString("hex");
+    // - crypto.randomBytes(16): Generates 16 random bytes
+    // - .toString("hex"): Converts to hexadecimal string (32 characters)
+    // - Example: "a1b2c3d4e5f6g7h8i9j0k1l2m3n4o5p6"
+    // - Used internally for user identification
     console.log(`\n   🆔 Generated User ID: ${userId}`);
 
     // Create and save user
@@ -491,6 +506,18 @@ app.post("/api/register", async (req, res) => {
     const token = jwt.sign({ userId, username }, JWT_SECRET, {
       expiresIn: "24h",
     });
+    // JWT STRUCTURE:
+    // Format: header.payload.signature
+    // Example: eyJhbGci.eyJ1c2Vy.SflKxwRJ
+    //
+    // Header (base64): { "alg": "HS256", "typ": "JWT" }
+    // Payload (base64): { "userId": "abc123", "username": "alice", "exp": 1701234567 }
+    // Signature: HMACSHA256(header + payload, JWT_SECRET)
+    //
+    // - Payload is NOT encrypted (anyone can decode and read it)
+    // - But signature prevents tampering
+    // - Only server with JWT_SECRET can create valid tokens
+    // - Client stores token and sends with each request
     console.log(`   Token (first 40 chars): ${token.substring(0, 40)}...`);
     console.log(`   Expires in: 24 hours`);
 
@@ -545,6 +572,24 @@ app.post("/api/login", async (req, res) => {
 
     const startTime = Date.now();
     const validPassword = await bcrypt.compare(password, user.password);
+    // - bcrypt.compare(plaintext, hash)
+    // - Input plaintext: "secret123"
+    // - Stored hash: "$2a$10$N9qo8uLO..."
+    //
+    // HOW IT WORKS:
+    // 1. Extract salt from stored hash
+    // 2. Hash the input password with same salt and rounds
+    // 3. Compare resulting hash with stored hash
+    // 4. Return true if match, false otherwise
+    //
+    // Example:
+    //   User enters: "secret123"
+    //   bcrypt hashes with same salt → "$2a$10$N9qo8uLO..."
+    //   Matches stored hash → TRUE ✅
+    //
+    //   User enters: "wrongpass"
+    //   bcrypt hashes with same salt → "$2a$10$X7Y8Z9W1..."
+    //   Doesn't match stored hash → FALSE ❌
     const verifyTime = Date.now() - startTime;
 
     console.log(`   Verification Time: ${verifyTime}ms`);
@@ -642,32 +687,74 @@ The flow will be like this:
 */
 io.use((socket, next) => {
   logSection("🔌 SOCKET CONNECTION ATTEMPT");
+
+  // STEP 1: Extract token from Socket.IO handshake
   const token = socket.handshake.auth.token;
+  // - Client sends: io(url, { auth: { token: "eyJhbGci..." } })
+  // - Server receives token here
+  // - Handshake happens before connection is established
 
   if (!token) {
     console.log(`   ❌ No token provided`);
     return next(new Error("Authentication error: No token provided"));
+    // - Rejects connection
+    // - Client receives "connect_error" event
   }
 
   try {
     console.log(`   Token Received: ${token.substring(0, 40)}...`);
     console.log(`   Verifying JWT signature...`);
 
+    // STEP 2: Verify and decode JWT token
     const decoded = jwt.verify(token, JWT_SECRET);
+    // - jwt.verify(token, secret)
+    // - Checks signature to ensure token is valid
+    // - Checks expiration date
+    // - Decodes payload if valid
+    //
+    // HOW IT WORKS:
+    // 1. Split token: header.payload.signature
+    // 2. Recreate signature: HMACSHA256(header + payload, JWT_SECRET)
+    // 3. Compare signatures
+    // 4. Check if expired
+    //
+    // Example decoded payload:
+    // {
+    //   userId: "a1b2c3d4...",
+    //   username: "alice",
+    //   iat: 1701234567,  // Issued at (timestamp)
+    //   exp: 1701320967   // Expires at (timestamp)
+    // }
+    //
+    // THROWS ERROR IF:
+    // - Signature doesn't match (token tampered with)
+    // - Token expired (past exp time)
+    // - Token malformed (invalid format)
 
     console.log(`   ✅ Token Valid!`);
     console.log(`   User ID: ${decoded.userId}`);
     console.log(`   Username: ${decoded.username}`);
 
+    // STEP 3: Attach user info to socket object
     socket.userId = decoded.userId;
     socket.username = decoded.username;
+    // - Now available in all socket event handlers
+    // - Example: socket.on("send-message", () => { console.log(socket.userId) })
+
+    // STEP 4: Allow connection
     next();
+    // - Calling next() without error allows connection
+    // - Socket.IO proceeds to emit "connect" event
   } catch (err) {
     console.log(`   ❌ Invalid token: ${err.message}`);
     next(new Error("Authentication error: Invalid token"));
+    // - Rejects connection
+    // - Common errors:
+    //   - "jwt expired" (token past expiration)
+    //   - "invalid signature" (token tampered)
+    //   - "jwt malformed" (invalid format)
   }
 });
-
 // ============= SOCKET.IO CONNECTION HANDLERS =============
 /*
 Handle new Socket.IO connections.

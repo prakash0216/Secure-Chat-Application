@@ -44,8 +44,13 @@ import {
 // const API_URL = "http://localhost:3000";
 const API_URL = "https://secure-chat-application.onrender.com";
 
+// ============= TAMPERING TEST UTILITIES =============
 // Expose this globally so users can test tampering in console
 if (typeof window !== "undefined") {
+  // Store the socket globally so we can intercept messages
+  window._chatSocket = null;
+  window._lastEncryptedMessage = null;
+
   window.testTampering = function (encryptedMessage) {
     console.log(
       "%c⚠️ TAMPERING TEST - Modifying encrypted message",
@@ -73,16 +78,68 @@ if (typeof window !== "undefined") {
     };
   };
 
+  // Function to send last message with tampering
+  window.sendTamperedMessage = function () {
+    if (!window._chatSocket) {
+      console.error(
+        "%c❌ No active chat socket!",
+        "color: #ef4444; font-weight: bold;"
+      );
+      return;
+    }
+
+    if (!window._lastEncryptedMessage) {
+      console.error(
+        "%c❌ No message to tamper! Send a message first.",
+        "color: #ef4444; font-weight: bold;"
+      );
+      return;
+    }
+
+    console.log(
+      "%c🔨 TAMPERING AND SENDING MESSAGE...",
+      "color: #f59e0b; font-size: 16px; font-weight: bold;"
+    );
+    console.log("─".repeat(80));
+
+    // Create tampered version
+    const tampered = window.testTampering(
+      window._lastEncryptedMessage.encryptedMessage
+    );
+
+    // Send tampered message
+    console.log(
+      "%c📤 Sending tampered message to recipient...",
+      "color: #f59e0b; font-weight: bold;"
+    );
+    window._chatSocket.emit("send-message", {
+      encryptedMessage: tampered,
+      recipientId: window._lastEncryptedMessage.recipientId,
+      recipientUsername: window._lastEncryptedMessage.recipientUsername,
+    });
+
+    console.log(
+      "%c✅ Tampered message sent!",
+      "color: #10b981; font-weight: bold;"
+    );
+    console.log(
+      "%c⚠️ Recipient will see decryption error due to HMAC mismatch",
+      "color: #ef4444;"
+    );
+    console.log("─".repeat(80));
+  };
+
   console.log(
     "%c🔒 Secure Chat Debug Tools Available",
     "color: #667eea; font-size: 14px; font-weight: bold;"
   );
+  console.log("%c1. Send a message normally", "color: #888;");
   console.log(
-    "%c1. Check Network tab to see encrypted messages",
+    "%c2. Call window.sendTamperedMessage() to resend with tampering",
     "color: #888;"
   );
   console.log(
-    "%c2. Use window.testTampering(msg) to simulate message tampering",
+    "%c3. The recipient will see the tampering detection message",
     "color: #888;"
   );
 }
@@ -97,31 +154,63 @@ if (typeof window !== "undefined") {
 */
 const encryptMessage = (message, key) => {
   try {
+    // STEP 1: Generate Random IV (Initialization Vector)
     const iv = CryptoJS.lib.WordArray.random(16);
+    // - CryptoJS: JavaScript library for cryptographic operations
+    // - lib.WordArray: CryptoJS's internal format for byte arrays
+    // - .random(16): Generates 16 random bytes (128 bits)
+    // - IV ensures same message encrypted twice produces different ciphertext
+    // - 16 bytes is standard for AES (128-bit IV)
+
+    // STEP 2: Encrypt the message using AES-256-CBC
     const encrypted = CryptoJS.AES.encrypt(
-      message,
-      CryptoJS.enc.Hex.parse(key),
+      message, // Plaintext message (string)
+      CryptoJS.enc.Hex.parse(key), // Convert hex string key to CryptoJS format
       {
-        iv: iv,
-        mode: CryptoJS.mode.CBC,
-        padding: CryptoJS.pad.Pkcs7,
+        iv: iv, // Use the random IV we generated
+        mode: CryptoJS.mode.CBC, // CBC = Cipher Block Chaining mode
+        padding: CryptoJS.pad.Pkcs7, // PKCS7 padding for incomplete blocks
       }
     );
+    // - AES.encrypt(): Advanced Encryption Standard algorithm
+    // - Key is 256-bit (64 hex characters = 32 bytes)
+    // - CBC mode: Each block depends on previous block (more secure)
+    // - PKCS7: Adds padding if message doesn't fit exact block size (16 bytes)
 
+    // STEP 3: Convert encrypted result to hex string
     const encryptedHex = encrypted.ciphertext.toString(CryptoJS.enc.Hex);
+    // - encrypted.ciphertext: Contains the actual encrypted bytes
+    // - .toString(CryptoJS.enc.Hex): Converts to hexadecimal string for transmission
+    // - Hex is easier to transmit over network than raw bytes
+
+    // STEP 4: Convert IV to hex string
     const ivHex = iv.toString(CryptoJS.enc.Hex);
+    // - IV also needs to be sent with message (not secret)
+    // - Receiver needs IV to decrypt
+    // - Converting to hex for network transmission
 
+    // STEP 5: Generate HMAC-SHA256 signature for integrity
     const hmac = CryptoJS.HmacSHA256(
-      encryptedHex + ivHex,
-      CryptoJS.enc.Hex.parse(key)
+      encryptedHex + ivHex, // Combine encrypted message and IV
+      CryptoJS.enc.Hex.parse(key) // Use same encryption key for HMAC
     );
+    // - HMAC: Hash-based Message Authentication Code
+    // - SHA256: 256-bit hash algorithm
+    // - Purpose: Detects if message was tampered with during transmission
+    // - Input: encrypted message + IV (concatenated)
+    // - Key: Same 256-bit key used for encryption
+    // - Output: 256-bit signature
 
-    return {
-      encrypted: encryptedHex,
-      iv: ivHex,
-      hmac: hmac.toString(CryptoJS.enc.Hex),
-      timestamp: Date.now(),
+    // STEP 6: Package everything for transmission
+    const result = {
+      encrypted: encryptedHex, // The encrypted message (hex string)
+      iv: ivHex, // The IV used (hex string, 32 chars)
+      hmac: hmac.toString(CryptoJS.enc.Hex), // Integrity signature (hex, 64 chars)
+      timestamp: Date.now(), // When message was created (milliseconds)
     };
+    // This object will be sent to the server via Socket.IO
+
+    return result;
   } catch (error) {
     throw new Error("Encryption failed: " + error.message);
   }
@@ -135,17 +224,31 @@ const encryptMessage = (message, key) => {
 */
 const decryptMessage = (encryptedData, key) => {
   try {
+    // STEP 1: Extract components from received encrypted data
     const { encrypted, iv, hmac: receivedHmac } = encryptedData;
+    // - encrypted: The ciphertext (hex string)
+    // - iv: The IV used during encryption (hex string)
+    // - receivedHmac: The HMAC signature from sender (hex string)
 
+    // STEP 2: Calculate HMAC on received data
     const calculatedHmac = CryptoJS.HmacSHA256(
-      encrypted + iv,
-      CryptoJS.enc.Hex.parse(key)
+      encrypted + iv, // Same input as encryption
+      CryptoJS.enc.Hex.parse(key) // Same key
     );
+    // - We recalculate the HMAC using the received data
+    // - If data was tampered with, HMAC will be different
+    // - This is CRUCIAL for security - verifies integrity
 
+    // STEP 3: Convert calculated HMAC to hex for comparison
     const calculatedHmacHex = calculatedHmac.toString(CryptoJS.enc.Hex);
-    const passed = calculatedHmacHex === receivedHmac;
 
-    // Log HMAC verification in console
+    // STEP 4: Compare HMACs (integrity check)
+    const passed = calculatedHmacHex === receivedHmac;
+    // - String comparison of two 256-bit hashes
+    // - If even ONE bit is different = tampering detected
+    // - This is why HMAC is so important!
+
+    // STEP 5: Log verification result to console
     console.log(
       "%c🔍 HMAC Integrity Check",
       `color: ${passed ? "#10b981" : "#ef4444"}; font-weight: bold;`
@@ -159,6 +262,7 @@ const decryptMessage = (encryptedData, key) => {
         : "❌ FAILED - Message was tampered!"
     );
 
+    // STEP 6: If HMAC doesn't match, REJECT the message
     if (!passed) {
       console.error(
         "%c❌ TAMPERING DETECTED!",
@@ -171,19 +275,35 @@ const decryptMessage = (encryptedData, key) => {
         "⚠️ Message integrity check failed - tampering detected!"
       );
     }
+    // - Security: NEVER decrypt if HMAC fails
+    // - Prevents processing of tampered messages
+    // - Error will show in UI as failed message
 
+    // STEP 7: HMAC passed - safe to decrypt
     const decrypted = CryptoJS.AES.decrypt(
-      { ciphertext: CryptoJS.enc.Hex.parse(encrypted) },
-      CryptoJS.enc.Hex.parse(key),
+      { ciphertext: CryptoJS.enc.Hex.parse(encrypted) }, // Convert hex to bytes
+      CryptoJS.enc.Hex.parse(key), // Convert key hex to bytes
       {
-        iv: CryptoJS.enc.Hex.parse(iv),
-        mode: CryptoJS.mode.CBC,
-        padding: CryptoJS.pad.Pkcs7,
+        iv: CryptoJS.enc.Hex.parse(iv), // Convert IV hex to bytes
+        mode: CryptoJS.mode.CBC, // Must match encryption mode
+        padding: CryptoJS.pad.Pkcs7, // Must match encryption padding
       }
     );
+    // - AES.decrypt(): Reverses the encryption
+    // - Must use EXACT same parameters as encryption:
+    //   ✓ Same key
+    //   ✓ Same IV (received with message)
+    //   ✓ Same mode (CBC)
+    //   ✓ Same padding (PKCS7)
+    // - Output: CryptoJS WordArray with decrypted bytes
 
+    // STEP 8: Convert decrypted bytes back to UTF-8 text
     const decryptedText = decrypted.toString(CryptoJS.enc.Utf8);
-    return decryptedText;
+    // - .toString(CryptoJS.enc.Utf8): Converts bytes to readable string
+    // - UTF-8: Standard text encoding (supports emojis, international characters)
+    // - Result: Original plaintext message
+
+    return decryptedText; // Return "Hello Bob"
   } catch (error) {
     throw new Error("Decryption failed: " + error.message);
   }
@@ -580,6 +700,9 @@ function App() {
     });
 
     setSocket(newSocket);
+    if (typeof window !== "undefined") {
+      window._chatSocket = newSocket;
+    }
   };
 
   useEffect(() => {
@@ -641,6 +764,29 @@ function App() {
 
     try {
       const encrypted = encryptMessage(messageInput, key);
+
+      if (typeof window !== "undefined") {
+        window._lastEncryptedMessage = {
+          encryptedMessage: encrypted,
+          recipientId: selectedUser.userId,
+          recipientUsername: selectedUser.username,
+        };
+
+        console.log(
+          "%c📨 Message Encrypted and Ready",
+          "color: #10b981; font-size: 14px; font-weight: bold;"
+        );
+        console.log("─".repeat(80));
+        console.log("Message:", messageInput);
+        console.log("Encrypted:", encrypted.encrypted.substring(0, 40) + "...");
+        console.log("IV:", encrypted.iv);
+        console.log("HMAC:", encrypted.hmac.substring(0, 40) + "...");
+        console.log("─".repeat(80));
+        console.log(
+          "%cTo test tampering, call: window.sendTamperedMessage()",
+          "color: #f59e0b; font-weight: bold;"
+        );
+      }
 
       socket.emit("send-message", {
         encryptedMessage: encrypted,
