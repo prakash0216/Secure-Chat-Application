@@ -1,3 +1,20 @@
+/*
+ * Secure Chat Application - Frontend Client
+ * 
+ * This React application provides the user interface for a real-time secure chat system.
+ * It handles client-side encryption, real-time messaging, and user authentication.
+ * 
+ * Key Features:
+ * - User registration and login with JWT authentication
+ * - End-to-end message encryption using AES-256-CBC (client-side)
+ * - Message integrity verification with HMAC-SHA256
+ * - Real-time messaging via Socket.IO
+ * - Responsive design with Material-UI (desktop and mobile)
+ * - Message history loading and decryption
+ * - Online user presence indicators
+ * - Secure conversation key management
+ */
+
 import React, { useState, useEffect, useRef } from "react";
 import io from "socket.io-client";
 import CryptoJS from "crypto-js";

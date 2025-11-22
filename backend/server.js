@@ -1,3 +1,19 @@
+/*
+ * Secure Chat Application - Backend Server
+ * 
+ * This server provides the backend infrastructure for a real-time secure chat application.
+ * It handles user authentication, message encryption, and real-time communication using Socket.IO.
+ * 
+ * Key Features:
+ * - User registration and authentication with JWT tokens
+ * - End-to-end message encryption using AES-256-CBC
+ * - Message integrity verification with HMAC-SHA256
+ * - Real-time messaging via Socket.IO
+ * - MongoDB for persistent storage of users, messages, and encryption keys
+ * - Password hashing with bcrypt
+ * - CORS support for frontend integration
+ */
+
 const express = require("express");
 const http = require("http");
 const socketIo = require("socket.io");
