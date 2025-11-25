@@ -2,7 +2,7 @@
  * Secure Chat Application - Backend Server
  * 
  * This server provides the backend infrastructure for a real-time secure chat application.
- * It handles user authentication, message encryption, and real-time communication using Socket.IO.
+ * It handles user authentication, message encryption verification, and real-time communication.
  * 
  * Key Features:
  * - User registration and authentication with JWT tokens
@@ -10,7 +10,7 @@
  * - Message integrity verification with HMAC-SHA256
  * - Real-time messaging via Socket.IO
  * - MongoDB for persistent storage of users, messages, and encryption keys
- * - Password hashing with bcrypt
+ * - Password hashing with bcrypt (10 rounds)
  * - CORS support for frontend integration
  */
 
@@ -269,136 +269,6 @@ async function getConversationKey(userId1, userId2) {
     return conversation.encryptionKey;
   } catch (error) {
     console.error("❌ Error getting conversation key:", error);
-    throw error;
-  }
-}
-
-/*
-Encrypt a message using AES-256-CBC with a 256-bit (32-byte) key.
-Here like in the frontend, we generate a random IV for each encryption operation and use HMAC-SHA256 to ensure message integrity.
-The complete flow will be like this:
-    * 1. Generate a random 128-bit (16-byte) IV.
-    * 2. Encrypt the message using AES-256-CBC with the provided key and IV.
-    * 3. Calculate the HMAC-SHA256 of the encrypted message and IV.
-    * 4. Return the encrypted message, IV, and HMAC-SHA256. 
-*/
-function encryptMessage(message, key) {
-  try {
-    logSection("🔒 ENCRYPTING MESSAGE");
-    console.log(`   Plain Text: "${message}"`);
-    console.log(`   Plain Text Length: ${message.length} characters`);
-
-    const iv = crypto.randomBytes(16);
-    console.log(`\n   📍 Step 1: Generate Random IV (Initialization Vector)`);
-    console.log(`   IV (hex): ${iv.toString("hex")}`);
-    console.log(`   IV Length: 16 bytes (128 bits)`);
-
-    console.log(`\n   📍 Step 2: Encrypt with AES-256-CBC`);
-    console.log(`   Algorithm: AES-256-CBC`);
-    console.log(`   Key (first 16 chars): ${key.substring(0, 16)}...`);
-
-    const cipher = crypto.createCipheriv(
-      "aes-256-cbc",
-      Buffer.from(key, "hex"),
-      iv
-    );
-    let encrypted = cipher.update(message, "utf8", "hex");
-    encrypted += cipher.final("hex");
-
-    console.log(
-      `   Encrypted Text (hex): ${encrypted.substring(
-        0,
-        32
-      )}...${encrypted.substring(encrypted.length - 16)}`
-    );
-    console.log(`   Encrypted Length: ${encrypted.length} hex chars`);
-
-    console.log(`\n   📍 Step 3: Generate HMAC-SHA256 for Integrity`);
-    console.log(`   HMAC Input: Encrypted + IV`);
-
-    const hmac = crypto.createHmac("sha256", Buffer.from(key, "hex"));
-    hmac.update(encrypted + iv.toString("hex"));
-    const signature = hmac.digest("hex");
-
-    console.log(
-      `   HMAC-SHA256: ${signature.substring(0, 32)}...${signature.substring(
-        signature.length - 8
-      )}`
-    );
-    console.log(`   HMAC Length: ${signature.length} hex chars (256 bits)`);
-
-    const result = {
-      encrypted,
-      iv: iv.toString("hex"),
-      hmac: signature,
-      timestamp: Date.now(),
-    };
-
-    console.log(`\n   ✅ Encryption Complete!`);
-    console.log(
-      `   Total Package Size: ~${JSON.stringify(result).length} bytes`
-    );
-
-    return result;
-  } catch (error) {
-    console.error("❌ Encryption error:", error);
-    throw error;
-  }
-}
-
-/*
-Decrypt a message using AES-256-CBC and verify its integrity using HMAC-SHA256.
-The Description flow will be like this:
-    * 1. Verify the HMAC-SHA256 of the received encrypted message and IV.
-    * 2. Decrypt the message using AES-256-CBC with the provided key and IV.
-    * 3. Return the decrypted plain text message.
-    * 4. If HMAC verification fails, throw an error indicating possible tampering.
-    * 5. If decryption fails, throw an error indicating decryption failure.
-    * 6. Otherwise, return the decrypted plain text message.
-*/
-function decryptMessage(encryptedData, key) {
-  try {
-    logSection("🔓 DECRYPTING MESSAGE");
-    const { encrypted, iv, hmac: receivedHmac } = encryptedData;
-
-    console.log(`   Encrypted Text: ${encrypted.substring(0, 32)}...`);
-    console.log(`   IV: ${iv}`);
-    console.log(`   Received HMAC: ${receivedHmac.substring(0, 32)}...`);
-
-    console.log(`\n   📍 Step 1: Verify HMAC for Message Integrity`);
-    const hmac = crypto.createHmac("sha256", Buffer.from(key, "hex"));
-    hmac.update(encrypted + iv);
-    const calculatedHmac = hmac.digest("hex");
-
-    console.log(`   Calculated HMAC: ${calculatedHmac.substring(0, 32)}...`);
-    console.log(`   Received HMAC:   ${receivedHmac.substring(0, 32)}...`);
-
-    if (calculatedHmac !== receivedHmac) {
-      console.log(`   ❌ HMAC MISMATCH - MESSAGE TAMPERED!`);
-      throw new Error(
-        "⚠️ Message integrity check failed - message may be tampered!"
-      );
-    }
-
-    console.log(`   ✅ HMAC Verified - Message Integrity Confirmed`);
-
-    console.log(`\n   📍 Step 2: Decrypt with AES-256-CBC`);
-    console.log(`   Using same key and IV from encryption`);
-
-    const decipher = crypto.createDecipheriv(
-      "aes-256-cbc",
-      Buffer.from(key, "hex"),
-      Buffer.from(iv, "hex")
-    );
-    let decrypted = decipher.update(encrypted, "hex", "utf8");
-    decrypted += decipher.final("utf8");
-
-    console.log(`   Decrypted Text: "${decrypted}"`);
-    console.log(`   ✅ Decryption Complete!`);
-
-    return decrypted;
-  } catch (error) {
-    console.error("❌ Decryption error:", error.message);
     throw error;
   }
 }
